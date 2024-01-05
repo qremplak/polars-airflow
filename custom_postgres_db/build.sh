@@ -1,0 +1,1 @@
+docker build -t custom_postgres_db/postgres -f Dockerfile .

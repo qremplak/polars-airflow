@@ -1,0 +1,104 @@
+# https://airflow.apache.org/docs/apache-airflow/2.7.3/docker-compose.yaml
+# https://github.com/apache/airflow/blob/main/Dockerfile
+
+version: '3'
+
+##########################################################
+##### AIRFLOW + Postgres metadata
+##########################################################
+
+x-airflow-common:
+  &airflow-common
+  image: docker.io/qremplak/polars-airflow:0.1.0
+  environment:
+    &airflow-common-env
+    # https://airflow.apache.org/docs/apache-airflow/stable/howto/set-config.html
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_POSTGRES_USER:-airflow}:${AIRFLOW_POSTGRES_PASSWORD:-airflow}@airflow-postgres/${AIRFLOW_POSTGRES_DB:-airflow}
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 10
+    AIRFLOW__CORE__XCOM_BACKEND: ${AIRFLOW_CORE_XCOM_BACKEND}
+    AIRFLOW_OPENVSCODE_TOKEN: ${AIRFLOW_OPENVSCODE_TOKEN}
+    #### DEFINING ALL Connections
+    ## >> Better to use declare_connections.sh script
+    ## By declaring connections from ENV you cant see them into webui
+    # https://airflow.apache.org/docs/apache-airflow/stable/howto/connection.html#storing-connections-in-environment-variables
+  user: "${AIRFLOW_UID}:${AIRFLOW_GID}"
+  volumes:
+    - ./volumes/airflow/logs:/opt/airflow/logs
+    - ./volumes/airflow/tmp_data:/tmp/data
+    - ./core:/opt/airflow/core
+    - ./workspace:/opt/airflow/dags
+  depends_on:
+    airflow-postgres:
+      condition: service_healthy
+
+services:
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - ${AIRFLOW_WEBUI_PORT}:8080
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: always
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: always
+    ports:
+     - ${AIRFLOW_OPENVSCODE_PORT}:3000
+
+  airflow-init:
+    <<: *airflow-common
+    command: version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+
+  airflow-postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: ${AIRFLOW_POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${AIRFLOW_POSTGRES_PASSWORD:-airflow}
+      POSTGRES_DB: ${AIRFLOW_POSTGRES_DB:-airflow}
+    user: "${AIRFLOW_POSTGRES_UID}:${AIRFLOW_POSTGRES_GID}"
+    volumes:
+      - ./volumes/airflow-postgres/data:/var/lib/postgresql/data
+    #ports:
+    #  - 5432:5432
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${AIRFLOW_POSTGRES_DB:-airflow}"]
+      interval: 5s
+      retries: 5
+    restart: always
+
+
+  ##########################################################
+  ##### POSTGRESQL DATABASE
+  ##########################################################
+
+  postgres:
+    image: custom_postgres_db/postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    user: "${POSTGRES_UID}:${POSTGRES_GID}"
+    ports:
+      - ${POSTGRES_PORT}:5432
+    #expose:
+    #  - 5432
+    volumes: 
+      - ./volumes/postgres/data:/var/lib/postgresql/data
